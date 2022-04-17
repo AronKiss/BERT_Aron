@@ -192,7 +192,7 @@ def run_training(train_dataloader,
                             labels=b_labels)
 
             # The call to `model` always returns a tuple, so we need to pull the loss value out of the tuple.
-            loss = outputs[0]
+            loss = outputs.loss
             logits = outputs.logits #######################################################
 
             # Accumulate the training loss over all of the batches so that we can
@@ -240,10 +240,9 @@ def run_training(train_dataloader,
         model.eval()
         
         # Tracking variables                 ###################
-        total_eval_accuracy = 0               ###################
-        total_eval_loss = 0                    ###################
-        nb_eval_steps = 0                     ###################
-
+        total_test_accuracy = 0               ###################
+        total_test_loss = 0                    ###################
+        
         logits_complete = [] # store logits of each batch
 
         # Evaluate data for one epoch
@@ -263,44 +262,58 @@ def run_training(train_dataloader,
                                 labels=b_labels)
  
             loss = outputs[0].item() # get loss   
-            logits = outputs[1]      # get logits
-            
-            
-            # Move logits CPU
+            logits = outputs[1]     # get logits
+        
+        
+                    
+             # Move logits CPU
             logits = logits.detach().cpu().numpy()
-            labels_id = b_labels.to('cpu').numpy()
+            label_ids = b_labels.to('cpu').numpy()
             
-            
-            # Calculate the accuracy for this batch of test sentences, and
-            # accumulate it over all batches.
-            total_eval_accuracy += flat_accuracy(logits, labels_id)
-            
-            # Report the final accuracy for this validation run.  ###################
-            avg_val_accuracy = total_eval_accuracy / len(validation_dataloader)  ###################
-            print("  Accuracy: {0:.2f}".format(avg_val_accuracy))  ###################
             
             # Accumulate the validation loss.
             total_test_loss += loss
             logits_complete.append(logits)
             
+         
+                                 
+            # Calculate the accuracy for this batch of test sentences, and
+            # accumulate it over all batches.
+            total_test_accuracy += flat_accuracy(logits, label_ids)
+            
+
+        # Report the final accuracy for this validation run.  ###################
+        avg_test_accuracy = total_test_accuracy / len(test_dataloader)  ###################
+        print("  Accuracy: {0:.2f}".format(avg_test_accuracy))  ###################
+        
+        # Calculate the average loss over all of the batches.
+        avg_test_loss = total_test_loss / len(test_dataloader)
+         
+
+        # Measure how long the validation run took.
+        validation_time = format_time(time.time() - t0)
+
+        print("  Validation Loss: {0:.2f}".format(avg_test_loss))        
+            
+            
+        
+        # for the classification_report   
         logits_complete = np.concatenate(logits_complete)
         
-        # Calculate the average loss over the test data batches.
-        avg_test_loss = total_test_loss / len(test_dataloader) 
+ 
         
         # Store the loss value for plotting the learning curve.
         test_loss_values.append(avg_test_loss)
         
-           # Measure how long the validation run took.  avg_val_accuracy
-        validation_time = format_time(time.time() - t0)  ###################
+   
         
         # Record all statistics from this epoch.  #########################################################
         training_stats.append(
             {
                 'epoch': i_epoch + 1,
                 'Training Loss': avg_train_loss,
-                'Valid. Loss': avg_val_loss,
-                'Valid. Accur.': avg_val_accuracy,
+                'Valid. Loss': avg_test_loss,
+                'Valid. Accur.': avg_test_accuracy,
                 'Training Time': training_time,
                 'Validation Time': validation_time
             }
@@ -311,6 +324,8 @@ def run_training(train_dataloader,
         print("  Validation took: {:}".format(format_time(time.time() - t0)))
         print(classification_report(test_labels, np.argmax(logits_complete, axis=1).flatten()))
         score = precision_recall_fscore_support(test_labels, np.argmax(logits_complete, axis=1).flatten())
+        print(" precision_recall_fscore_support: ",score)
+         
 
 
     
@@ -342,7 +357,8 @@ def run_training(train_dataloader,
         tokenizer.save_vocabulary(output_dir)
 
 
-    return score
+    #return score
+    return training_stats
 
 
 def predict(dataloader, model, proba=True, progress_bar=True):
