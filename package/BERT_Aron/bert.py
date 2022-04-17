@@ -88,6 +88,13 @@ def format_time(elapsed):
     elapsed_rounded = int(round((elapsed)))
     return str(datetime.timedelta(seconds=elapsed_rounded)) # Format as hh:mm:ss
 
+    # Function to calculate the accuracy of our predictions vs labels - by Chris McCormick
+def flat_accuracy(preds, labels):
+    pred_flat = np.argmax(preds, axis=1).flatten()
+    labels_flat = labels.flatten()
+    return np.sum(pred_flat == labels_flat) / len(labels_flat)
+
+
 def run_training(train_dataloader, 
                  test_dataloader, 
                  n_epochs=3, 
@@ -107,6 +114,7 @@ def run_training(train_dataloader,
     torch.manual_seed(seed_val)
     torch.cuda.manual_seed_all(seed_val)
     
+    
     # Load model
     model = BertForSequenceClassification.from_pretrained("bert-base-uncased", 
                                                                num_labels = num_labels, 
@@ -114,6 +122,7 @@ def run_training(train_dataloader,
                                                                output_hidden_states = False)
     # Tell pytorch to run this model on the GPU.
     model.cuda()
+    
     
     optimizer = AdamW(model.parameters(), lr = lr, eps = 1e-8)
     # Create the learning rate scheduler.
@@ -125,6 +134,16 @@ def run_training(train_dataloader,
     # Store the average loss after each epoch so we can plot them.
     train_loss_values = []
     test_loss_values = []
+    
+    
+        ############################# by Chris McCormick #############################
+    # We'll store a number of quantities such as training and validation loss, 
+    # validation accuracy, and timings.
+    training_stats = []
+
+    # Measure the total training time for the whole run.
+    total_t0 = time.time()
+    #######################################################################################
     
     for i_epoch in range(n_epochs):
     # each epoch
@@ -166,10 +185,14 @@ def run_training(train_dataloader,
 
             # Perform a forward pass (evaluate the model on this training batch).
             # This will return the loss (rather than the model output) because we have provided the `labels`.
-            outputs = model(b_inputs, token_type_ids=None, attention_mask=b_masks,labels=b_labels)
+            outputs = model(b_inputs, 
+                            token_type_ids=None, 
+                            attention_mask=b_masks,
+                            labels=b_labels)
 
             # The call to `model` always returns a tuple, so we need to pull the loss value out of the tuple.
             loss = outputs[0]
+            logits = outputs.logits #######################################################
 
             # Accumulate the training loss over all of the batches so that we can
             # calculate the average loss at the end. `loss` is a Tensor containing a
@@ -195,6 +218,8 @@ def run_training(train_dataloader,
 
         # Store the loss value for plotting the learning curve.
         train_loss_values.append(avg_train_loss)
+        
+        training_time = format_time(time.time() - t0)  ##################################################
 
         print("")
         print("  Average training loss: {0:.2f}".format(avg_train_loss))
@@ -212,38 +237,73 @@ def run_training(train_dataloader,
 
         # Put the model in evaluation mode--the dropout layers behave differently during evaluation.
         model.eval()
+        
+        # Tracking variables                 ###################
+        total_eval_accuracy = 0               ###################
+        total_eval_loss = 0                    ###################
+        nb_eval_steps = 0                     ###################
 
         logits_complete = [] # store logits of each batch
 
         # Evaluate data for one epoch
         for test_batch in test_dataloader:
-            # Add batch to GPU
-            b_inputs = test_batch[0].to(device)
-            b_masks = test_batch[1].to(device)
-            b_labels = test_batch[2].to(device)
+            # Add batch to GPU   -- `batch` contains three pytorch tensors:
+            b_inputs = test_batch[0].to(device)  ## input ids
+            b_masks = test_batch[1].to(device)   ## attention masks
+            b_labels = test_batch[2].to(device)  ## labels 
 
             # Telling the model not to compute or store gradients, saving memory and speeding up validation
             with torch.no_grad():        
                 # Forward pass, calculate test loss and logit predictions.
                 # token_type_ids = None : it's not 2-sentences task
-                outputs = model(b_inputs, token_type_ids=None, attention_mask=b_masks,labels=b_labels)
-
-            loss = outputs[0].item() # get loss
+                outputs = model(b_inputs, 
+                                token_type_ids=None, 
+                                attention_mask=b_masks,
+                                labels=b_labels)
+ 
+            loss = outputs[0].item() # get loss   
             logits = outputs[1]      # get logits
+            
             
             # Move logits CPU
             logits = logits.detach().cpu().numpy()
-            #labels_id = b_labels.to('cpu').numpy()
+            labels_id = b_labels.to('cpu').numpy()
             
+            
+            # Calculate the accuracy for this batch of test sentences, and
+            # accumulate it over all batches.
+            total_eval_accuracy += flat_accuracy(logits, labels_id)
+            
+            # Report the final accuracy for this validation run.  ###################
+            avg_val_accuracy = total_eval_accuracy / len(validation_dataloader)  ###################
+            print("  Accuracy: {0:.2f}".format(avg_val_accuracy))  ###################
+            
+            # Accumulate the validation loss.
             total_test_loss += loss
             logits_complete.append(logits)
             
         logits_complete = np.concatenate(logits_complete)
         
         # Calculate the average loss over the test data batches.
-        avg_test_loss = total_test_loss / len(test_dataloader)            
+        avg_test_loss = total_test_loss / len(test_dataloader) 
+        
         # Store the loss value for plotting the learning curve.
         test_loss_values.append(avg_test_loss)
+        
+           # Measure how long the validation run took.  avg_val_accuracy
+        validation_time = format_time(time.time() - t0)  ###################
+        
+        # Record all statistics from this epoch.  #########################################################
+        training_stats.append(
+            {
+                'epoch': i_epoch + 1,
+                'Training Loss': avg_train_loss,
+                'Valid. Loss': avg_val_loss,
+                'Valid. Accur.': avg_val_accuracy,
+                'Training Time': training_time,
+                'Validation Time': validation_time
+            }
+        )
         
         print("")
         print("  Average test loss: {0:.2f}".format(avg_test_loss))
