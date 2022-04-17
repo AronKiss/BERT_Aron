@@ -124,7 +124,8 @@ def run_training(train_dataloader,
     model.cuda()
     
     
-    optimizer = AdamW(model.parameters(), lr = lr, eps = 1e-8)
+    #optimizer = AdamW(model.parameters(), lr = lr, eps = 1e-8)  # this optimizer has been deprecated
+    optimizer = torch.optim.AdamW(model.parameters(), lr = lr, eps = 1e-8)
     # Create the learning rate scheduler.
     scheduler = get_linear_schedule_with_warmup(optimizer,
                                                 num_warmup_steps=0,
